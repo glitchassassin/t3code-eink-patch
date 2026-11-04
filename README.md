@@ -1,46 +1,33 @@
 # T3 Code e-ink patch
 
-Personal Android light-mode code and diff styling for a Boox NoteAir5C.
-Black monospace text with a medium base weight, bold function and variable
-names, bold italic comments, italic literals, and stronger diff colors.
+Android light-mode code and diff styling for a Boox NoteAir5C: black
+monospace text, heavier base weight, bold names, bold italic comments,
+italic literals, and stronger diff colors.
 
-Based on [T3 Code](https://github.com/pingdotgg/t3code) commit
-`8ab024f31a6d285015c4fb84e52a0183f614e237`.
+## How to use
 
-## Apply
-
-Install T3 Code dependencies first, then run this from the T3 Code checkout:
+Install Vite Plus (`vp`), the Node version required by T3 Code's
+`package.json`, JDK 17, and the Android SDK. Set `JAVA_HOME` and
+`ANDROID_HOME` to their installation directories, then run:
 
 ```sh
-bash ~/repos/t3code-eink-patch/apply.sh
+./release.sh
 ```
 
-Use a fresh, unpatched checkout. The helper checks and applies the patches,
-regenerates the highlighting table against the installed tokenizer, and runs
-focused tests. It does not build or install an APK.
+The script clones [T3 Code](https://github.com/pingdotgg/t3code) into
+`t3code/` if needed, discards tracked changes and untracked files in that
+checkout, fetches the latest stable version tag, installs its locked
+dependencies, applies the patches, regenerates highlighting, runs focused
+tests, and builds an APK at `releases/t3code-vX.Y.Z-eink.apk`.
 
-- `01-android-fonts.patch`: independent monospace and bold italic corrections.
-- `02-eink-styling.patch`: personal palette and rendering changes.
-- `apply.sh`: application, regeneration, and verification.
+The APK is a self-contained **T3 Code Preview** release build signed with
+the local debug key. OTA updates are disabled to preserve the patches.
+Install the APK on your device separately.
 
-## Updating
+Each run removes previous patches and other local source edits in `t3code/`.
+Ignored files, including dependencies and local environment settings, are
+preserved. Patched sources remain afterward for inspection. Patch conflicts
+stop the build and require updating the patches for the new release.
 
-Review application conflicts when moving to a newer T3 Code version. The
-helper does not force application. If the second patch fails its application
-check, the helper reverses the first patch before exiting. A later generation
-or test failure leaves the patches applied for inspection.
-
-Keep palette values and token rules in the patched
-`apps/mobile/src/lib/eInkCodeTheme.ts`. Keep the generated highlighting table
-in the build, but regenerate it rather than including it in these patches.
-Review token categories and tests when the tokenizer changes.
-
-If upstream fixes the Android fonts, review whether patch 01 is still needed
-and adjust the helper and patch 02 accordingly. Preserve the separation between
-font fixes and personal styling when exporting updated patches.
-
-## Verification
-
-The initial patches were checked against clean copies of the base files.
-Fourteen highlighting and generator tests, mobile typecheck, focused lint, and
-the Android release build passed. The preview APK was installed on the Boox.
+Both `t3code/` and `releases/` are ignored by this repository. The nested
+clone keeps its own Git history and upstream remote.
