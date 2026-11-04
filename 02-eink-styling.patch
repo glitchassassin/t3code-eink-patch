@@ -1,0 +1,577 @@
+diff --git a/apps/mobile/modules/t3-review-diff/android/src/main/java/expo/modules/t3reviewdiff/ReviewDiffCodeLayout.kt b/apps/mobile/modules/t3-review-diff/android/src/main/java/expo/modules/t3reviewdiff/ReviewDiffCodeLayout.kt
+index 770bc656de..0aba52cde4 100644
+--- a/apps/mobile/modules/t3-review-diff/android/src/main/java/expo/modules/t3reviewdiff/ReviewDiffCodeLayout.kt
++++ b/apps/mobile/modules/t3-review-diff/android/src/main/java/expo/modules/t3reviewdiff/ReviewDiffCodeLayout.kt
+@@ -171,7 +171,8 @@ internal class CodeLayoutCache {
+     }
+     if (row.change == "add" || row.change == "delete") {
+       val bar = if (row.change == "add") theme.addBar else theme.deleteBar
+-      val color = Color.argb(71, Color.red(bar), Color.green(bar), Color.blue(bar))
++      val alpha = if (theme.background == Color.WHITE && row.change == "add") 32 else 71
++      val color = Color.argb(alpha, Color.red(bar), Color.green(bar), Color.blue(bar))
+       for (range in row.wordDiffRanges) {
+         val start = range.start.coerceIn(0, text.length)
+         val end = range.end.coerceIn(start, text.length)
+diff --git a/apps/mobile/scripts/generate-highlights.mts b/apps/mobile/scripts/generate-highlights.mts
+index be7ed93d50..1d088527a7 100644
+--- a/apps/mobile/scripts/generate-highlights.mts
++++ b/apps/mobile/scripts/generate-highlights.mts
+@@ -12,6 +12,7 @@ import * as NodeModule from "node:module";
+ import * as NodeOS from "node:os";
+ import * as NodePath from "node:path";
+ import * as NodeURL from "node:url";
++import { eInkTokenStyle } from "../src/lib/eInkCodeTheme.ts";
+ 
+ const WASM2C_VERSION = "1.0.42";
+ const THEMES = { light: "pierre-light", dark: "pierre-dark" } as const;
+@@ -64,6 +65,10 @@ export async function computeHighlightsData() {
+   );
+ 
+   const themeStyles: Record<string, Array<readonly [string, number]>> = {};
++  const { default: tokenTypes } = await importDist<{ default: string[] }>(
++    source.root,
++    "token-types.js",
++  );
+   for (const [scheme, name] of Object.entries(THEMES)) {
+     const { default: theme } = await importDist<{ default: unknown }>(
+       source.root,
+@@ -72,6 +77,7 @@ export async function computeHighlightsData() {
+     const { fg, styles } = prepareTheme(theme);
+     // Mirrors `lineRecordsToTokens`: unstyled tokens take the theme foreground.
+     themeStyles[scheme] = styles.map((style, tokenId) => {
++      if (scheme === "light") return eInkTokenStyle(tokenTypes[tokenId] ?? "none");
+       const color = style?.color ?? fg;
+       if (!/^#[0-9a-f]{6}([0-9a-f]{2})?$/iu.test(color)) {
+         throw new Error(`${name} token ${tokenId} has a color React Native cannot draw: ${color}`);
+@@ -143,6 +149,11 @@ function resolveWasm2c(): { readonly binary: string; readonly prefix: string } {
+ }
+ 
+ async function generate() {
++  if (process.argv.includes("--styles-only")) {
++    NodeFS.writeFileSync(generatedDataPath, renderHighlightsData(await computeHighlightsData()));
++    NodeChildProcess.execFileSync("vp", ["fmt", generatedDataPath], { stdio: "inherit" });
++    return;
++  }
+   const source = resolveHighlightsPackage();
+   const wasm2c = resolveWasm2c();
+   const scratch = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-highlights-"));
+diff --git a/apps/mobile/src/features/files/SourceFileSurface.tsx b/apps/mobile/src/features/files/SourceFileSurface.tsx
+index d78a45fc75..fe029dd0f2 100644
+--- a/apps/mobile/src/features/files/SourceFileSurface.tsx
++++ b/apps/mobile/src/features/files/SourceFileSurface.tsx
+@@ -23,6 +23,7 @@ import {
+ import { createNativeReviewDiffTheme } from "../review/nativeReviewDiffAdapter";
+ import { REVIEW_MONO_FONT_FAMILY, renderVisibleWhitespace } from "../review/reviewDiffRendering";
+ import type { HighlightedToken } from "../../lib/highlights";
++import { codeTokenTextStyle, E_INK_CODE_COLORS } from "../../lib/eInkCodeTheme";
+ import { cn } from "../../lib/cn";
+ import type { ResolvedMobileCodeSurface } from "../../lib/appearancePreferences";
+ import { useAppearanceCodeSurface } from "../settings/appearance/useAppearanceCodeSurface";
+@@ -58,6 +59,7 @@ const HighlightedSourceLine = function HighlightedSourceLine(props: {
+   readonly tokens: ReadonlyArray<HighlightedToken> | null;
+   readonly highlighted: boolean;
+   readonly wordBreak: boolean;
++  readonly scheme: "light" | "dark";
+ }) {
+   return (
+     <View
+@@ -70,6 +72,9 @@ const HighlightedSourceLine = function HighlightedSourceLine(props: {
+           width: props.codeSurface.gutterWidth,
+           fontFamily: REVIEW_MONO_FONT_FAMILY,
+           fontSize: props.codeSurface.lineNumberFontSize,
++          ...(props.scheme === "light"
++            ? ({ color: E_INK_CODE_COLORS.text, fontWeight: "500" } as const)
++            : {}),
+           lineHeight: props.codeSurface.rowHeight,
+         }}
+       >
+@@ -83,6 +88,8 @@ const HighlightedSourceLine = function HighlightedSourceLine(props: {
+         style={{
+           fontFamily: REVIEW_MONO_FONT_FAMILY,
+           fontSize: props.codeSurface.fontSize,
++          ...codeTokenTextStyle(null, props.scheme),
++          ...(props.scheme === "light" ? { color: E_INK_CODE_COLORS.text } : {}),
+           lineHeight: props.codeSurface.rowHeight,
+           minWidth: props.wordBreak ? undefined : 320,
+         }}
+@@ -94,15 +101,6 @@ const HighlightedSourceLine = function HighlightedSourceLine(props: {
+                 const start = offset;
+                 offset += token.content.length;
+ 
+-                const fontWeight =
+-                  token.fontStyle !== null && (token.fontStyle & 2) === 2
+-                    ? ("700" as const)
+-                    : ("400" as const);
+-                const fontStyle =
+-                  token.fontStyle !== null && (token.fontStyle & 1) === 1
+-                    ? ("italic" as const)
+-                    : ("normal" as const);
+-
+                 return (
+                   <NativeText
+                     key={`${start}:${token.content.length}:${token.color ?? ""}`}
+@@ -113,8 +111,7 @@ const HighlightedSourceLine = function HighlightedSourceLine(props: {
+                     style={{
+                       color: token.color ?? undefined,
+                       fontFamily: REVIEW_MONO_FONT_FAMILY,
+-                      fontWeight,
+-                      fontStyle,
++                      ...codeTokenTextStyle(token.fontStyle, props.scheme),
+                     }}
+                   >
+                     {token.content.length > 0 ? renderVisibleWhitespace(token.content) : " "}
+@@ -237,7 +234,9 @@ function NativeSourceFileSurface(
+ 
+ function JavaScriptSourceFileSurface(props: SourceFileSurfaceProps) {
+   const usesAutomaticInsets = Platform.OS === "ios" && !props.embedded;
+-  const foreground = useUniwindTheme()["--color-foreground"];
++  const { themeAppearance: scheme } = useAppearancePreferences();
++  const appForeground = useUniwindTheme()["--color-foreground"];
++  const foreground = scheme === "light" ? E_INK_CODE_COLORS.text : appForeground;
+   const { codeSurface, codeWordBreak } = useAppearanceCodeSurface();
+   const { normalizedContents, lines, status, targetIndex, tokens } = useSourceFileModel(props);
+   const selectableTokens = props.selectable ? boundedSelectableSourceTokens(tokens) : null;
+@@ -267,6 +266,7 @@ function JavaScriptSourceFileSurface(props: SourceFileSurfaceProps) {
+       tokens={tokens?.[index] ?? null}
+       highlighted={index === targetIndex}
+       wordBreak={codeWordBreak}
++      scheme={scheme}
+     />
+   );
+ 
+@@ -277,6 +277,7 @@ function JavaScriptSourceFileSurface(props: SourceFileSurfaceProps) {
+       selectionColorClassName={Platform.OS === "android" ? "accent-focus/32" : undefined}
+       style={{
+         color: foreground,
++        ...codeTokenTextStyle(null, scheme),
+         fontFamily: REVIEW_MONO_FONT_FAMILY,
+         fontSize: codeSurface.fontSize,
+         lineHeight: codeSurface.rowHeight,
+@@ -296,14 +297,7 @@ function JavaScriptSourceFileSurface(props: SourceFileSurfaceProps) {
+                           key={`${index}:${tokenIndex}`}
+                           style={{
+                             color: token.color ?? foreground,
+-                            fontWeight:
+-                              token.fontStyle !== null && (token.fontStyle & 2) === 2
+-                                ? "700"
+-                                : "400",
+-                            fontStyle:
+-                              token.fontStyle !== null && (token.fontStyle & 1) === 1
+-                                ? "italic"
+-                                : "normal",
++                            ...codeTokenTextStyle(token.fontStyle, scheme),
+                           }}
+                         >
+                           {token.content}
+@@ -371,7 +365,10 @@ function JavaScriptSourceFileSurface(props: SourceFileSurfaceProps) {
+   );
+ 
+   return (
+-    <View className="relative flex-1 bg-sheet">
++    <View
++      className="relative flex-1 bg-sheet"
++      style={scheme === "light" ? { backgroundColor: E_INK_CODE_COLORS.background } : undefined}
++    >
+       <SourceHighlightStatusView status={status} />
+       {usesLineList ? (
+         codeWordBreak ? (
+diff --git a/apps/mobile/src/features/files/nativeSourceFileAdapter.ts b/apps/mobile/src/features/files/nativeSourceFileAdapter.ts
+index a85328fbb2..e2baf054f2 100644
+--- a/apps/mobile/src/features/files/nativeSourceFileAdapter.ts
++++ b/apps/mobile/src/features/files/nativeSourceFileAdapter.ts
+@@ -11,6 +11,7 @@ export const NATIVE_SOURCE_CONTENT_WIDTH = 32_000;
+ 
+ export function createNativeSourceStyle(
+   codeSurface: ResolvedMobileCodeSurface,
++  scheme: "light" | "dark",
+ ): NativeReviewDiffStyle {
+   return {
+     rowHeight: codeSurface.rowHeight,
+@@ -20,9 +21,9 @@ export function createNativeSourceStyle(
+     codePadding: codeSurface.codePadding,
+     textVerticalInset: codeSurface.textVerticalInset,
+     codeFontSize: codeSurface.fontSize,
+-    codeFontWeight: "regular",
++    codeFontWeight: scheme === "light" ? "medium" : "regular",
+     lineNumberFontSize: codeSurface.lineNumberFontSize,
+-    lineNumberFontWeight: "regular",
++    lineNumberFontWeight: scheme === "light" ? "medium" : "regular",
+     emptyStateFontSize: Math.round(
+       MOBILE_TYPOGRAPHY.label.fontSize * (codeSurface.fontSize / MOBILE_CODE_SURFACE.fontSize),
+     ),
+diff --git a/apps/mobile/src/features/review/ReviewCommentCard.tsx b/apps/mobile/src/features/review/ReviewCommentCard.tsx
+index a65bd83e9a..4d9ba8870a 100644
+--- a/apps/mobile/src/features/review/ReviewCommentCard.tsx
++++ b/apps/mobile/src/features/review/ReviewCommentCard.tsx
+@@ -1,3 +1,4 @@
++import { codeTokenTextStyle } from "../../lib/eInkCodeTheme";
+ import { memo, useMemo, useState } from "react";
+ import { getFiletypeFromFileName } from "@pierre/diffs/utils/getFiletypeFromFileName";
+ import { ScrollView, StyleSheet, Text as NativeText, View, type ColorValue } from "react-native";
+@@ -199,14 +200,18 @@ export const ReviewCommentCard = memo(function ReviewCommentCard(props: {
+           showsHorizontalScrollIndicator={false}
+           bounces={false}
+           className="border-t"
+-          style={{ backgroundColor: props.colors.codeBackground, borderColor: props.colors.border }}
++          style={{
++            backgroundColor: nativeReviewDiffTheme.background,
++            borderColor: props.colors.border,
++          }}
+           contentContainerStyle={{ padding: 10 }}
+         >
+           <NativeText
+             selectable
+             className="font-mono"
+             style={{
+-              color: props.colors.text,
++              color: nativeReviewDiffTheme.text,
++              ...codeTokenTextStyle(null, appearanceScheme),
+               fontFamily: REVIEW_MONO_FONT_FAMILY,
+               fontSize: codeSurface.fontSize,
+               lineHeight: codeSurface.rowHeight,
+@@ -223,9 +228,8 @@ export const ReviewCommentCard = memo(function ReviewCommentCard(props: {
+                         <NativeText
+                           key={tokenIndex}
+                           style={{
+-                            color: token.color ?? props.colors.text,
+-                            fontStyle: (token.fontStyle ?? 0) & 1 ? "italic" : "normal",
+-                            fontWeight: (token.fontStyle ?? 0) & 2 ? "700" : "400",
++                            color: token.color ?? nativeReviewDiffTheme.text,
++                            ...codeTokenTextStyle(token.fontStyle, appearanceScheme),
+                           }}
+                         >
+                           {token.content}
+diff --git a/apps/mobile/src/features/review/ReviewCommentComposerSheet.tsx b/apps/mobile/src/features/review/ReviewCommentComposerSheet.tsx
+index a98d88a152..eca5e07818 100644
+--- a/apps/mobile/src/features/review/ReviewCommentComposerSheet.tsx
++++ b/apps/mobile/src/features/review/ReviewCommentComposerSheet.tsx
+@@ -1,3 +1,4 @@
++import { eInkChangeBackground, E_INK_CODE_COLORS } from "../../lib/eInkCodeTheme";
+ import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
+ import { TextInputWrapper } from "expo-paste-input";
+ import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
+@@ -202,10 +203,22 @@ export function ReviewCommentComposerSheet(props: ReviewCommentComposerSheetProp
+                           <View
+                             key={line.id}
+                             className={cn("flex-row items-start", changeTone(line.change))}
+-                            style={{ height: codeSurface.rowHeight }}
++                            style={{
++                              height: codeSurface.rowHeight,
++                              ...(selectedTheme === "light"
++                                ? { backgroundColor: eInkChangeBackground(line.change) }
++                                : {}),
++                            }}
+                           >
+                             <ReviewChangeBar change={line.change} height={codeSurface.rowHeight} />
+-                            <Text className="w-9 py-1 pr-1 text-right text-2xs font-mono text-foreground-muted">
++                            <Text
++                              className="w-9 py-1 pr-1 text-right text-2xs font-mono text-foreground-muted"
++                              style={
++                                selectedTheme === "light"
++                                  ? { color: E_INK_CODE_COLORS.text, fontWeight: "500" }
++                                  : undefined
++                              }
++                            >
+                               {lineNumber ?? ""}
+                             </Text>
+                             <View className="min-w-0 flex-1 shrink-0 px-1 py-1">
+diff --git a/apps/mobile/src/features/review/nativeReviewDiffAdapter.ts b/apps/mobile/src/features/review/nativeReviewDiffAdapter.ts
+index d55aa97e30..90fa2a02e2 100644
+--- a/apps/mobile/src/features/review/nativeReviewDiffAdapter.ts
++++ b/apps/mobile/src/features/review/nativeReviewDiffAdapter.ts
+@@ -1,3 +1,4 @@
++import { E_INK_CODE_COLORS } from "../../lib/eInkCodeTheme";
+ import type { NativeReviewDiffRow, NativeReviewDiffTheme } from "../diffs/nativeReviewDiffSurface";
+ import type { NativeReviewDiffFile } from "../diffs/nativeReviewDiffTypes";
+ import * as Arr from "effect/Array";
+@@ -68,12 +69,13 @@ function opaqueNativeHexColor(color: string, background: string): string {
+ export function createNativeReviewDiffStyle(
+   codeSurface: ResolvedMobileCodeSurface,
+   wordWrap: boolean,
++  scheme: "light" | "dark",
+ ) {
+   return {
+     wordWrap,
+     rowHeight: codeSurface.rowHeight,
+     contentWidth: NATIVE_REVIEW_DIFF_CONTENT_WIDTH,
+-    changeBarWidth: 4,
++    changeBarWidth: scheme === "light" ? 6 : 4,
+     gutterWidth: codeSurface.gutterWidth,
+     codePadding: codeSurface.codePadding,
+     textVerticalInset: codeSurface.textVerticalInset,
+@@ -86,9 +88,9 @@ export function createNativeReviewDiffStyle(
+     fileHeaderCountColumnWidth: 38,
+     fileHeaderCountGap: 5,
+     codeFontSize: codeSurface.fontSize,
+-    codeFontWeight: "regular",
++    codeFontWeight: scheme === "light" ? "medium" : "regular",
+     lineNumberFontSize: codeSurface.lineNumberFontSize,
+-    lineNumberFontWeight: "regular",
++    lineNumberFontWeight: scheme === "light" ? "medium" : "regular",
+     hunkFontSize: 11,
+     hunkFontWeight: "medium",
+     fileHeaderFontSize: 11,
+@@ -204,19 +206,14 @@ export function createNativeReviewDiffTheme(
+   }
+ 
+   return {
+-    background,
+-    text: nativeColor(appTheme["--color-md-code-text"]),
+-    mutedText: nativeColor(appTheme["--color-foreground-muted"]),
+-    headerBackground: background,
+-    border: nativeColor(appTheme["--color-border"]),
+-    hunkBackground: nativeColor(appTheme["--color-subtle-strong"]),
+-    hunkText: nativeColor(appTheme["--color-foreground"]),
+-    addBackground: "#e5f8f5",
+-    deleteBackground: "#ffe6e7",
+-    addBar: "#00cab1",
+-    deleteBar: terminalRed ?? "#ff2e3f",
+-    addText: "#199F43",
+-    deleteText: "#D52C36",
++    ...E_INK_CODE_COLORS,
++    mutedText: E_INK_CODE_COLORS.text,
++    headerBackground: E_INK_CODE_COLORS.background,
++    border: E_INK_CODE_COLORS.text,
++    hunkBackground: E_INK_CODE_COLORS.hunkBackground,
++    hunkText: E_INK_CODE_COLORS.text,
++    addText: E_INK_CODE_COLORS.text,
++    deleteText: E_INK_CODE_COLORS.text,
+   };
+ }
+ 
+diff --git a/apps/mobile/src/features/review/reviewDiffRendering.tsx b/apps/mobile/src/features/review/reviewDiffRendering.tsx
+index 99b589e47c..50110a99dc 100644
+--- a/apps/mobile/src/features/review/reviewDiffRendering.tsx
++++ b/apps/mobile/src/features/review/reviewDiffRendering.tsx
+@@ -1,3 +1,5 @@
++import { codeTokenTextStyle, E_INK_CODE_COLORS } from "../../lib/eInkCodeTheme";
++import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
+ import { Platform, Text as NativeText, View } from "react-native";
+ 
+ import { cn } from "../../lib/cn";
+@@ -41,7 +43,24 @@ export function ReviewChangeBar(props: {
+   readonly change: ReviewRenderableLineRow["change"];
+   readonly height?: number;
+ }) {
++  const { themeAppearance: scheme } = useAppearancePreferences();
+   const height = props.height ?? REVIEW_DIFF_LINE_HEIGHT;
++  if (scheme === "light") {
++    return (
++      <View
++        style={{
++          width: 6,
++          height,
++          backgroundColor:
++            props.change === "add"
++              ? E_INK_CODE_COLORS.addBar
++              : props.change === "delete"
++                ? E_INK_CODE_COLORS.deleteBar
++                : E_INK_CODE_COLORS.background,
++        }}
++      />
++    );
++  }
+   if (props.change === "delete") {
+     return (
+       <View className="w-[5px] overflow-hidden" style={{ height }}>
+@@ -72,6 +91,9 @@ export function DiffTokenText(props: {
+   readonly fontSize?: number;
+   readonly lineHeight?: number;
+ }) {
++  const { themeAppearance: scheme } = useAppearancePreferences();
++  const baseStyle =
++    scheme === "light" ? { color: E_INK_CODE_COLORS.text, fontWeight: "500" as const } : {};
+   const fontSize = props.fontSize ?? MOBILE_CODE_SURFACE.fontSize;
+   const lineHeight = props.lineHeight ?? MOBILE_CODE_SURFACE.rowHeight;
+   if (!props.tokens || props.tokens.length === 0) {
+@@ -84,6 +106,7 @@ export function DiffTokenText(props: {
+           fontFamily: REVIEW_MONO_FONT_FAMILY,
+           fontSize,
+           lineHeight,
++          ...baseStyle,
+         }}
+       >
+         {renderVisibleWhitespace(props.fallback || " ")}
+@@ -100,6 +123,7 @@ export function DiffTokenText(props: {
+         fontFamily: REVIEW_MONO_FONT_FAMILY,
+         fontSize,
+         lineHeight,
++        ...baseStyle,
+       }}
+     >
+       {(() => {
+@@ -112,23 +136,22 @@ export function DiffTokenText(props: {
+             token.fontStyle !== null && (token.fontStyle & 2) === 2
+               ? ("700" as const)
+               : ("500" as const);
+-          const fontStyle =
+-            token.fontStyle !== null && (token.fontStyle & 1) === 1
+-              ? ("italic" as const)
+-              : ("normal" as const);
+-
+           return (
+             <NativeText
+               key={`${start}:${token.content.length}:${token.color ?? ""}:${token.fontStyle ?? ""}`}
+               selectable
+               style={{
+-                color: token.color ?? undefined,
++                color: token.color ?? (scheme === "light" ? E_INK_CODE_COLORS.text : undefined),
+                 fontFamily: REVIEW_MONO_FONT_FAMILY,
+-                fontWeight,
+-                fontStyle,
++                ...codeTokenTextStyle(token.fontStyle, scheme),
++                ...(scheme === "dark" ? { fontWeight } : {}),
+                 backgroundColor:
+                   token.diffHighlight && props.change
+-                    ? diffHighlightColor(props.change)
++                    ? scheme === "light"
++                      ? props.change === "add"
++                        ? E_INK_CODE_COLORS.addHighlight
++                        : E_INK_CODE_COLORS.deleteHighlight
++                      : diffHighlightColor(props.change)
+                     : undefined,
+                 borderRadius: token.diffHighlight ? 4 : undefined,
+               }}
+diff --git a/apps/mobile/src/features/settings/appearance/useAppearanceCodeSurface.ts b/apps/mobile/src/features/settings/appearance/useAppearanceCodeSurface.ts
+index 5bd7bb4698..de3b210a92 100644
+--- a/apps/mobile/src/features/settings/appearance/useAppearanceCodeSurface.ts
++++ b/apps/mobile/src/features/settings/appearance/useAppearanceCodeSurface.ts
+@@ -14,15 +14,18 @@ export function useAppearanceCodeSurface(): {
+   readonly nativeSourceStyle: ReturnType<typeof createNativeSourceStyle>;
+   readonly nativeReviewDiffStyle: ReturnType<typeof createNativeReviewDiffStyle>;
+ } {
+-  const { appearance } = useAppearancePreferences();
++  const { appearance, themeAppearance } = useAppearancePreferences();
+   const codeSurface = useMemo(
+     () => resolveMobileCodeSurface(appearance.codeFontSize),
+     [appearance.codeFontSize],
+   );
+-  const nativeSourceStyle = useMemo(() => createNativeSourceStyle(codeSurface), [codeSurface]);
++  const nativeSourceStyle = useMemo(
++    () => createNativeSourceStyle(codeSurface, themeAppearance),
++    [codeSurface, themeAppearance],
++  );
+   const nativeReviewDiffStyle = useMemo(
+-    () => createNativeReviewDiffStyle(codeSurface, appearance.codeWordBreak),
+-    [appearance.codeWordBreak, codeSurface],
++    () => createNativeReviewDiffStyle(codeSurface, appearance.codeWordBreak, themeAppearance),
++    [appearance.codeWordBreak, codeSurface, themeAppearance],
+   );
+ 
+   return {
+diff --git a/apps/mobile/src/lib/highlights.test.ts b/apps/mobile/src/lib/highlights.test.ts
+index 0867b29384..6c7d222910 100644
+--- a/apps/mobile/src/lib/highlights.test.ts
++++ b/apps/mobile/src/lib/highlights.test.ts
+@@ -1,5 +1,5 @@
+ import { codeToTokens } from "@pierre/highlights";
+-import { pierreDark, pierreLight } from "@pierre/highlights/themes";
++import { pierreDark } from "@pierre/highlights/themes";
+ import { describe, expect, it, vi } from "vite-plus/test";
+ 
+ import { resolveHighlightLanguage } from "./highlightLanguage";
+@@ -22,10 +22,7 @@ describe("highlightCode", () => {
+       "",
+     ].join("\n");
+ 
+-    for (const [scheme, theme] of [
+-      ["light", pierreLight],
+-      ["dark", pierreDark],
+-    ] as const) {
++    for (const [scheme, theme] of [["dark", pierreDark]] as const) {
+       const expected = codeToTokens(code, { lang: "tsx", theme }).tokens.map((line) =>
+         line.map((token) => ({
+           content: token.content,
+@@ -37,6 +34,20 @@ describe("highlightCode", () => {
+     }
+   });
+ 
++  it("uses black text and sparse typography in light mode", () => {
++    const code = '// explanation\nfunction greet() { return "hello"; }\nlet name = greet();\nname;';
++    const lines = highlightCode(code, "typescript", "light");
++    expect(lines.flat().every((token) => token.color === "#000000")).toBe(true);
++    expect(lines[0]).toEqual([{ content: "// explanation", color: "#000000", fontStyle: 3 }]);
++    expect(lines[1]?.find((token) => token.content === "greet")?.fontStyle).toBe(2);
++    expect(lines[2]?.find((token) => token.content === "greet")?.fontStyle).toBe(2);
++    expect(lines[3]?.find((token) => token.content === "name")?.fontStyle).toBe(2);
++    expect(
++      lines[1]?.some((token) => token.content.includes("hello") && token.fontStyle === 1),
++    ).toBe(true);
++    expect(lines[1]?.find((token) => token.content.trim() === "function")?.fontStyle).toBe(0);
++  });
++
+   it("keeps an over-long line as one plain token", () => {
+     const longLine = `const data = "${"x".repeat(1_000)}";`;
+     const [first, second] = highlightCode(`let a = 1;\n${longLine}`, "typescript", "dark");
+@@ -72,6 +83,13 @@ it.each([
+   for (const scheme of ["light", "dark"] as const) {
+     const tokens = highlightCode(code, language, scheme);
+     expect(tokens.map((line) => line.map((token) => token.content).join("")).join("\n")).toBe(code);
+-    expect(new Set(tokens.flat().map((token) => token.color)).size).toBeGreaterThan(1);
++    if (scheme === "light") {
++      expect(new Set(tokens.flat().map((token) => token.color))).toEqual(new Set(["#000000"]));
++      expect(
++        tokens[0]?.some((token) => token.content.trim() === "42" && token.fontStyle === 1),
++      ).toBe(true);
++    } else {
++      expect(new Set(tokens.flat().map((token) => token.color)).size).toBeGreaterThan(1);
++    }
+   }
+ });
+--- a/apps/mobile/modules/t3-review-diff/android/src/main/java/expo/modules/t3reviewdiff/ReviewDiffCanvasDrawing.kt
++++ b/apps/mobile/modules/t3-review-diff/android/src/main/java/expo/modules/t3reviewdiff/ReviewDiffCanvasDrawing.kt
+@@ -376,7 +376,8 @@
+     if (lines.nativeLayout != null) return
+     if (row.wordDiffRanges.isEmpty() || (row.change != "add" && row.change != "delete")) return
+     val color = if (row.change == "add") theme.addBar else theme.deleteBar
+-    backgroundPaint.color = withAlpha(color, 71)
++    val alpha = if (theme.background == Color.WHITE && row.change == "add") 32 else 71
++    backgroundPaint.color = withAlpha(color, alpha)
+     val characterWidth = textPaint.measureText("M")
+     val fontHeight = textPaint.fontMetrics.run { descent - ascent }
+     val highlightHeight = max(4f * density, min(bottom - top - 4f * density, fontHeight))
+diff --git a/apps/mobile/src/lib/eInkCodeTheme.ts b/apps/mobile/src/lib/eInkCodeTheme.ts
+new file mode 100644
+index 0000000000..ede231123b
+--- /dev/null
++++ b/apps/mobile/src/lib/eInkCodeTheme.ts
+@@ -0,0 +1,39 @@
++export const E_INK_CODE_COLORS = {
++  background: "#ffffff",
++  text: "#000000",
++  addBar: "#00B036",
++  deleteBar: "#FF6163",
++  addBackground: "#CFEFD9",
++  deleteBackground: "#FFD7D8",
++  addHighlight: "#B5E7C5",
++  deleteHighlight: "#FFB0B1",
++  hunkBackground: "#dddddd",
++} as const;
++
++export function eInkChangeBackground(change: "add" | "delete" | "context") {
++  return change === "add"
++    ? E_INK_CODE_COLORS.addBackground
++    : change === "delete"
++      ? E_INK_CODE_COLORS.deleteBackground
++      : E_INK_CODE_COLORS.background;
++}
++
++export function eInkTokenStyle(token: string): readonly [string, number] {
++  const fontStyle = token.startsWith("comment")
++    ? 3
++    : /^(function|variable)(\.|$)/.test(token) || token === "type.class"
++      ? 2
++      : /^(string|number|boolean|constant)(\.|$)/.test(token)
++        ? 1
++        : 0;
++  return [E_INK_CODE_COLORS.text, fontStyle];
++}
++
++export function codeTokenTextStyle(fontStyle: number | null, scheme: "light" | "dark") {
++  const flags = fontStyle ?? 0;
++  return {
++    fontWeight:
++      flags & 2 ? ("700" as const) : scheme === "light" ? ("500" as const) : ("400" as const),
++    fontStyle: flags & 1 ? ("italic" as const) : ("normal" as const),
++  };
++}

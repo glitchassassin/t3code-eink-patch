@@ -1,0 +1,20 @@
+--- a/apps/mobile/modules/t3-review-diff/android/src/main/java/expo/modules/t3reviewdiff/ReviewDiffCanvasDrawing.kt
++++ b/apps/mobile/modules/t3-review-diff/android/src/main/java/expo/modules/t3reviewdiff/ReviewDiffCanvasDrawing.kt
+@@ -35,7 +35,7 @@
+     Typeface.create(ReviewDiffTypefaces.regular, Typeface.ITALIC)
+   }
+   private val boldItalicCodeTypeface by lazy {
+-    Typeface.create(ReviewDiffTypefaces.bold, Typeface.ITALIC)
++    Typeface.create(ReviewDiffTypefaces.regular, Typeface.BOLD_ITALIC)
+   }
+ 
+   init {
+@@ -523,7 +523,7 @@
+ 
+ private object ReviewDiffTypefaces {
+   val regular: Typeface = Typeface.create("monospace", Typeface.NORMAL)
+-  private val medium: Typeface = Typeface.create("monospace-medium", Typeface.NORMAL)
++  private val medium: Typeface = Typeface.create(regular, 500, false)
+   val bold: Typeface = Typeface.create("monospace", Typeface.BOLD)
+ 
+   fun forWeight(weight: String): Typeface = when (weight.lowercase()) {
