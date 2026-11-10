@@ -56,10 +56,10 @@ index be7ed93d50..1d088527a7 100644
    const wasm2c = resolveWasm2c();
    const scratch = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-highlights-"));
 diff --git a/apps/mobile/src/features/files/SourceFileSurface.tsx b/apps/mobile/src/features/files/SourceFileSurface.tsx
-index d78a45fc75..fe029dd0f2 100644
+index 9ee512d9a1..70e0ae5148 100644
 --- a/apps/mobile/src/features/files/SourceFileSurface.tsx
 +++ b/apps/mobile/src/features/files/SourceFileSurface.tsx
-@@ -23,6 +23,7 @@ import {
+@@ -25,6 +25,7 @@ import {
  import { createNativeReviewDiffTheme } from "../review/nativeReviewDiffAdapter";
  import { REVIEW_MONO_FONT_FAMILY, renderVisibleWhitespace } from "../review/reviewDiffRendering";
  import type { HighlightedToken } from "../../lib/highlights";
@@ -67,15 +67,15 @@ index d78a45fc75..fe029dd0f2 100644
  import { cn } from "../../lib/cn";
  import type { ResolvedMobileCodeSurface } from "../../lib/appearancePreferences";
  import { useAppearanceCodeSurface } from "../settings/appearance/useAppearanceCodeSurface";
-@@ -58,6 +59,7 @@ const HighlightedSourceLine = function HighlightedSourceLine(props: {
+@@ -65,6 +66,7 @@ const HighlightedSourceLine = function HighlightedSourceLine(props: {
    readonly tokens: ReadonlyArray<HighlightedToken> | null;
    readonly highlighted: boolean;
    readonly wordBreak: boolean;
 +  readonly scheme: "light" | "dark";
+   readonly onLongPress?: () => void;
  }) {
-   return (
-     <View
-@@ -70,6 +72,9 @@ const HighlightedSourceLine = function HighlightedSourceLine(props: {
+   const selectable = props.onLongPress === undefined;
+@@ -79,6 +81,9 @@ const HighlightedSourceLine = function HighlightedSourceLine(props: {
            width: props.codeSurface.gutterWidth,
            fontFamily: REVIEW_MONO_FONT_FAMILY,
            fontSize: props.codeSurface.lineNumberFontSize,
@@ -85,7 +85,7 @@ index d78a45fc75..fe029dd0f2 100644
            lineHeight: props.codeSurface.rowHeight,
          }}
        >
-@@ -83,6 +88,8 @@ const HighlightedSourceLine = function HighlightedSourceLine(props: {
+@@ -92,6 +97,8 @@ const HighlightedSourceLine = function HighlightedSourceLine(props: {
          style={{
            fontFamily: REVIEW_MONO_FONT_FAMILY,
            fontSize: props.codeSurface.fontSize,
@@ -94,7 +94,7 @@ index d78a45fc75..fe029dd0f2 100644
            lineHeight: props.codeSurface.rowHeight,
            minWidth: props.wordBreak ? undefined : 320,
          }}
-@@ -94,15 +101,6 @@ const HighlightedSourceLine = function HighlightedSourceLine(props: {
+@@ -103,15 +110,6 @@ const HighlightedSourceLine = function HighlightedSourceLine(props: {
                  const start = offset;
                  offset += token.content.length;
  
@@ -110,7 +110,7 @@ index d78a45fc75..fe029dd0f2 100644
                  return (
                    <NativeText
                      key={`${start}:${token.content.length}:${token.color ?? ""}`}
-@@ -113,8 +111,7 @@ const HighlightedSourceLine = function HighlightedSourceLine(props: {
+@@ -122,8 +120,7 @@ const HighlightedSourceLine = function HighlightedSourceLine(props: {
                      style={{
                        color: token.color ?? undefined,
                        fontFamily: REVIEW_MONO_FONT_FAMILY,
@@ -120,34 +120,42 @@ index d78a45fc75..fe029dd0f2 100644
                      }}
                    >
                      {token.content.length > 0 ? renderVisibleWhitespace(token.content) : " "}
-@@ -237,7 +234,9 @@ function NativeSourceFileSurface(
+@@ -229,7 +226,7 @@ function NativeSourceFileSurface(
+     : NATIVE_SOURCE_CONTENT_WIDTH;
  
+   return (
+-    <View className="relative flex-1 bg-sheet">
++    <View className="relative flex-1 bg-sheet" style={scheme === "light" ? { backgroundColor: E_INK_CODE_COLORS.background } : undefined}>
+       <SourceHighlightStatusView status={status} />
+       <NativeView
+         collapsable={false}
+@@ -266,7 +263,8 @@ function NativeSourceFileSurface(
  function JavaScriptSourceFileSurface(props: SourceFileSurfaceProps) {
    const usesAutomaticInsets = Platform.OS === "ios" && !props.embedded;
--  const foreground = useUniwindTheme()["--color-foreground"];
+   const appTheme = useUniwindTheme();
+-  const foreground = appTheme["--color-foreground"];
 +  const { themeAppearance: scheme } = useAppearancePreferences();
-+  const appForeground = useUniwindTheme()["--color-foreground"];
-+  const foreground = scheme === "light" ? E_INK_CODE_COLORS.text : appForeground;
++  const foreground = scheme === "light" ? E_INK_CODE_COLORS.text : appTheme["--color-foreground"];
    const { codeSurface, codeWordBreak } = useAppearanceCodeSurface();
    const { normalizedContents, lines, status, targetIndex, tokens } = useSourceFileModel(props);
    const selectableTokens = props.selectable ? boundedSelectableSourceTokens(tokens) : null;
-@@ -267,6 +266,7 @@ function JavaScriptSourceFileSurface(props: SourceFileSurfaceProps) {
+@@ -301,6 +299,7 @@ function JavaScriptSourceFileSurface(props: SourceFileSurfaceProps) {
+       line={item}
        tokens={tokens?.[index] ?? null}
        highlighted={index === targetIndex}
-       wordBreak={codeWordBreak}
 +      scheme={scheme}
+       wordBreak={codeWordBreak}
+       onLongPress={onLongPressLine ? () => onLongPressLine(index + 1) : undefined}
      />
-   );
- 
-@@ -277,6 +277,7 @@ function JavaScriptSourceFileSurface(props: SourceFileSurfaceProps) {
-       selectionColorClassName={Platform.OS === "android" ? "accent-focus/32" : undefined}
+@@ -312,6 +311,7 @@ function JavaScriptSourceFileSurface(props: SourceFileSurfaceProps) {
+       selectable
        style={{
          color: foreground,
 +        ...codeTokenTextStyle(null, scheme),
          fontFamily: REVIEW_MONO_FONT_FAMILY,
          fontSize: codeSurface.fontSize,
          lineHeight: codeSurface.rowHeight,
-@@ -296,14 +297,7 @@ function JavaScriptSourceFileSurface(props: SourceFileSurfaceProps) {
+@@ -331,14 +331,7 @@ function JavaScriptSourceFileSurface(props: SourceFileSurfaceProps) {
                            key={`${index}:${tokenIndex}`}
                            style={{
                              color: token.color ?? foreground,
@@ -163,16 +171,13 @@ index d78a45fc75..fe029dd0f2 100644
                            }}
                          >
                            {token.content}
-@@ -371,7 +365,10 @@ function JavaScriptSourceFileSurface(props: SourceFileSurfaceProps) {
+@@ -432,7 +425,7 @@ function JavaScriptSourceFileSurface(props: SourceFileSurfaceProps) {
    );
  
    return (
 -    <View className="relative flex-1 bg-sheet">
-+    <View
-+      className="relative flex-1 bg-sheet"
-+      style={scheme === "light" ? { backgroundColor: E_INK_CODE_COLORS.background } : undefined}
-+    >
-       <SourceHighlightStatusView status={status} />
++    <View className="relative flex-1 bg-sheet" style={scheme === "light" ? { backgroundColor: E_INK_CODE_COLORS.background } : undefined}>
+       {usesWebSelection ? null : <SourceHighlightStatusView status={status} />}
        {usesLineList ? (
          codeWordBreak ? (
 diff --git a/apps/mobile/src/features/files/nativeSourceFileAdapter.ts b/apps/mobile/src/features/files/nativeSourceFileAdapter.ts

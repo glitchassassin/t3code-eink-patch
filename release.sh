@@ -6,49 +6,42 @@ repo_dir="$patch_dir/t3code"
 output_dir="$patch_dir/releases"
 trap 'echo "Release failed at line $LINENO. Local changes were left for inspection." >&2' ERR
 
-for tool in git node vp java; do
-  command -v "$tool" >/dev/null || { echo "Required tool missing: $tool" >&2; exit 1; }
-done
-if [[ -z "${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}" ]]; then
-  echo "Set ANDROID_HOME to your Android SDK directory." >&2
-  exit 1
-fi
+bash "$patch_dir/check-tools.sh"
 
-if [[ ! -e "$repo_dir" && ! -L "$repo_dir" ]]; then
-  git clone https://github.com/pingdotgg/t3code.git "$repo_dir"
-fi
 if [[ -L "$repo_dir" || ! -d "$repo_dir/.git" ]]; then
-  echo "Expected a separate Git clone at $repo_dir." >&2
+  echo "Run ./precheck.sh first to prepare the source checkout." >&2
   exit 1
 fi
-git -C "$repo_dir" fetch origin --tags
-latest_tag=$(git -C "$repo_dir" tag --list 'v*' --sort=-version:refname |
-  sed -n '/^v[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*$/ { p; q; }')
-[[ -n "$latest_tag" ]] || { echo "No stable version tags found." >&2; exit 1; }
-echo "Discarding tracked changes and untracked files in $repo_dir"
-git -C "$repo_dir" reset --hard HEAD
-git -C "$repo_dir" clean -fd
-git -C "$repo_dir" switch --detach "$latest_tag"
+latest_tag=${1:-}
+if [[ -z "$latest_tag" ]]; then
+  latest_tag=$(git -C "$repo_dir" tag --points-at HEAD --list 'v*' --sort=-version:refname |
+    sed -n '/^v[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*$/ { p; q; }')
+fi
+[[ "$latest_tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "Expected stable version vX.Y.Z." >&2; exit 1; }
+source_commit=$(git -C "$repo_dir" rev-parse --verify "refs/tags/$latest_tag^{commit}")
+if [[ "$(git -C "$repo_dir" rev-parse HEAD)" != "$source_commit" ]]; then
+  echo "Checkout is not at $latest_tag. Run ./precheck.sh $latest_tag first." >&2
+  exit 1
+fi
 cd "$repo_dir"
-node --input-type=module -e '
-  import { readFileSync } from "node:fs";
-  const required = JSON.parse(readFileSync("package.json", "utf8")).engines.node;
-  if (process.versions.node !== required) {
-    console.error(`Use Node ${required} for this release (current: ${process.versions.node}).`);
-    process.exit(1);
-  }
-'
 echo "Building T3 Code $latest_tag with e-ink patches"
 vp install --frozen-lockfile
 
 export PATH="$repo_dir/apps/mobile/node_modules/.bin:$repo_dir/node_modules/.bin:$PATH"
-git apply --check "$patch_dir/01-android-fonts.patch"
-git apply "$patch_dir/01-android-fonts.patch"
-if ! git apply --check "$patch_dir/02-eink-styling.patch"; then
-  git apply -R "$patch_dir/01-android-fonts.patch"
-  exit 1
-fi
-git apply "$patch_dir/02-eink-styling.patch"
+# Check the entire patch set before changing any source. A retry can reuse
+# patches already applied by an earlier build attempt.
+patches=("$patch_dir/01-android-fonts.patch" "$patch_dir/02-eink-styling.patch")
+for patch in "${patches[@]}"; do
+  if git apply --reverse --check "$patch" 2>/dev/null; then
+    continue
+  fi
+  git apply --check "$patch"
+done
+for patch in "${patches[@]}"; do
+  if ! git apply --reverse --check "$patch" 2>/dev/null; then
+    git apply "$patch"
+  fi
+done
 cd apps/mobile
 node scripts/generate-highlights.mts --styles-only
 vp test run src/lib/highlights.test.ts scripts/generate-highlights.test.ts
